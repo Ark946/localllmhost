@@ -57,8 +57,8 @@ Via JitPack (tag the repo, then):
 repositories { maven("https://jitpack.io") }
 
 dependencies {
-    implementation("com.github.<USERNAME>:<REPO>:<TAG>")
-    // or module-scoped: :llm-host-client (pulls in :llm-contract transitively)
+    implementation("com.github.Ark946.localllmhost:llm-host-client:v0.1.0")
+    // :llm-host-client pulls in :llm-contract transitively
 }
 ```
 

@@ -35,7 +35,7 @@ afterEvaluate {
         publications {
             create<MavenPublication>("release") {
                 from(components["release"])
-                groupId = "com.github.ithiria894"
+                groupId = "com.github.Ark946"
                 artifactId = "llm-contract"
                 version = "0.1.0"
             }
