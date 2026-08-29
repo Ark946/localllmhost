@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material 3 baseline palette (dark) — blue seed -->
+    <color name="md_primary">#A8C7FA</color>
+    <color name="md_on_primary">#062E6F</color>
+    <color name="md_primary_container">#0842A0</color>
+    <color name="md_on_primary_container">#D3E3FD</color>
+
+    <color name="md_secondary">#BCC7DB</color>
+    <color name="md_on_secondary">#26313F</color>
+    <color name="md_secondary_container">#3C4857</color>
+    <color name="md_on_secondary_container">#D7E3F8</color>
+
+    <color name="md_tertiary">#95CCFF</color>
+    <color name="md_on_tertiary">#003353</color>
+    <color name="md_tertiary_container">#004A77</color>
+    <color name="md_on_tertiary_container">#CCE5FF</color>
+
+    <color name="md_error">#F2B8B5</color>
+    <color name="md_on_error">#601410</color>
+    <color name="md_error_container">#8C1D18</color>
+    <color name="md_on_error_container">#F9DEDC</color>
+
+    <color name="md_background">#1A1C1E</color>
+    <color name="md_on_background">#E2E2E6</color>
+    <color name="md_surface">#1A1C1E</color>
+    <color name="md_on_surface">#E2E2E6</color>
+    <color name="md_surface_variant">#44464A</color>
+    <color name="md_on_surface_variant">#C4C6CB</color>
+
+    <color name="md_outline">#8E9095</color>
+    <color name="md_outline_variant">#44464A</color>
+</resources>

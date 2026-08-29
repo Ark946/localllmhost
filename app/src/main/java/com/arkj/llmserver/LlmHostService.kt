@@ -31,6 +31,9 @@ class LlmHostService : Service() {
         private const val TAG = "LlmHostService"
         private const val CHANNEL_ID = "llm_host_service"
         private const val NOTIFICATION_ID = 1001
+
+        /** Whether the foreground service is currently alive (read by MainActivity for UI state). */
+        @Volatile var isRunning = false
     }
 
     private lateinit var dispatcher: SessionDispatcher
@@ -38,6 +41,7 @@ class LlmHostService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isRunning = true
         HostPrefs.init(this)
         dispatcher = SessionDispatcher(applicationContext).also { d ->
             d.notifier = object : SessionDispatcher.Notifier {
@@ -61,6 +65,7 @@ class LlmHostService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onDestroy() {
+        isRunning = false
         dispatcher.invalidateAll("service destroyed")
         callbacks.kill()
         XLog.i(TAG, "onDestroy")

@@ -115,8 +115,58 @@ object LocalModelManager {
                 )
             )
         } ?: emptyList()
-        return builtIns + custom
+        val scanned = scannedModelEntries(context).map { model ->
+            CatalogEntry(
+                model = model,
+                isDownloaded = true,
+                isSupported = true,
+                path = getModelPath(context, model),
+            )
+        }
+        return builtIns + custom + scanned
     }
+
+    /** All models with a valid file on disk (built-in, custom, and marketplace downloads). */
+    fun downloadedModels(context: Context): List<ModelInfo> =
+        catalog(context).filter { it.isDownloaded }.map { it.model }
+
+    /**
+     * Models found on disk that aren't part of the built-in catalog or the custom URL,
+     * i.e. marketplace downloads. Each is treated like a custom model (relaxed size check).
+     */
+    fun scannedModelEntries(context: Context): List<ModelInfo> {
+        val dir = runCatching { getModelDir(context) }.getOrNull() ?: return emptyList()
+        val knownNames = AVAILABLE_MODELS.map { it.fileName }.toSet() + (customModel()?.fileName ?: "")
+        return runCatching {
+            dir.listFiles()
+                ?.filter { it.isFile && (it.name.endsWith(".litertlm") || it.name.endsWith(".task")) }
+                ?.filter { it.name !in knownNames && it.length() >= 1_048_576L }
+                ?.map { file ->
+                    ModelInfo(
+                        id = file.name,
+                        displayName = file.name.removeSuffix(".litertlm").removeSuffix(".task"),
+                        url = "",
+                        fileName = file.name,
+                        sizeBytes = file.length(),
+                        minRamGb = 0,
+                        isCustom = true,
+                    )
+                }
+                ?.sortedBy { it.displayName }
+                ?: emptyList()
+        }.getOrDefault(emptyList())
+    }
+
+    /** Convert a marketplace entry into a downloadable ModelInfo (size resolved on download). */
+    fun toModelInfo(m: HfModelCatalog.MarketplaceModel): ModelInfo = ModelInfo(
+        id = m.fileName,
+        displayName = m.name,
+        url = m.fileUrl,
+        fileName = m.fileName,
+        sizeBytes = 0L,
+        minRamGb = 0,
+        isCustom = true,
+    )
 
     /** The model the host is currently configured to serve. */
     fun selectedModel(context: Context): ModelInfo? {
@@ -433,7 +483,9 @@ object LocalModelManager {
             XLog.w(TAG, "Removing invalid completed model file: ${targetFile.absolutePath} (${targetFile.length()} bytes)")
             targetFile.delete()
         }
-        if (tempFile.exists() && tempFile.length() > expectedUpperBound(model)) {
+        // Size-unknown models (marketplace/custom) have no meaningful upper bound (it would
+        // resolve to 32MB), so never treat their partial download as oversized — keep it for resume.
+        if (model.sizeBytes > 0 && tempFile.exists() && tempFile.length() > expectedUpperBound(model)) {
             XLog.w(TAG, "Removing oversized partial download: ${tempFile.absolutePath} (${tempFile.length()} bytes)")
             tempFile.delete()
         }
