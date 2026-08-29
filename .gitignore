@@ -8,3 +8,6 @@ build/
 .externalNativeBuild
 .cxx
 local.properties
+# Release signing key (backup this file + keystore/release.jks yourself!)
+/keystore.properties
+/keystore/

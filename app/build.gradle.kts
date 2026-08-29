@@ -2,6 +2,17 @@ plugins {
     alias(libs.plugins.android.application)
 }
 
+import java.io.FileInputStream
+import java.util.Properties
+
+// Release signing credentials live in keystore.properties (git-ignored).
+// The keystore file itself must be backed up: every future release has to be
+// signed with this same key to allow in-place upgrades.
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) FileInputStream(f).use { load(it) }
+}
+
 android {
     namespace = "com.arkj.llmserver"
     compileSdk = 36
@@ -10,8 +21,20 @@ android {
         applicationId = "com.arkj.llmserver"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
+    }
+
+    signingConfigs {
+        if (keystoreProps.isNotEmpty()) {
+            create("release") {
+                // storeFile is project-root relative (e.g. keystore/release.jks).
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
