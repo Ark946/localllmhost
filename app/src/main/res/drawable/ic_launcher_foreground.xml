@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- stylized "brain/chip" glyph -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30c-8,0 -14,4 -17,9c-7,1 -12,7 -12,14c0,8 6,14 14,14h30c8,0 14,-6 14,-14c0,-7 -5,-13 -12,-14C68,34 62,30 54,30zM42,58h-4v-8h4V58zM50,62h-4V46h4V62zM58,66h-4V42h4V66zM66,60h-4v-12h4V60z" />
+</vector>

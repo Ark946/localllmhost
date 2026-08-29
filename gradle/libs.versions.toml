@@ -1,0 +1,22 @@
+[versions]
+agp = "9.1.1"
+coreKtx = "1.10.1"
+junit = "4.13.2"
+appcompat = "1.6.1"
+material = "1.10.0"
+langchain4j = "1.12.2"
+okhttp = "4.12.0"
+gson = "2.13.2"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+material = { group = "com.google.android.material", name = "material", version.ref = "material" }
+langchain4j-core = { group = "dev.langchain4j", name = "langchain4j-core", version.ref = "langchain4j" }
+okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
