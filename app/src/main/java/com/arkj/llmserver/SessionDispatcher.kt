@@ -8,7 +8,10 @@ import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.OpenApiTool
+import com.google.ai.edge.litertlm.Message
+import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.ToolCall
 import com.google.ai.edge.litertlm.tool
 import com.google.gson.Gson
 import com.google.gson.JsonObject
@@ -26,6 +29,7 @@ import dev.langchain4j.data.message.ToolExecutionResultMessage
 import dev.langchain4j.data.message.UserMessage
 import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
@@ -64,6 +68,12 @@ class SessionDispatcher(private val context: Context) {
         fun onQueueStateChanged(handle: String, position: Int)
         fun onSessionInvalidated(handle: String, reason: String)
     }
+
+    /** Full text accumulated across streamed chunks, plus any native tool calls the SDK parsed. */
+    private data class StreamedResponse(
+        val fullText: String,
+        val nativeToolCalls: List<ToolCall>?,
+    )
 
     private inner class HostSession(
         val handle: String,
@@ -178,32 +188,26 @@ class SessionDispatcher(private val context: Context) {
                 messages.size
             )
 
-            var lastResponse: Any? = null
+            var lastResponse: StreamedResponse? = null
             for (msg in newMessages) {
                 when (msg) {
                     is SystemMessage -> { /* baked into ConversationConfig */ }
                     is UserMessage -> {
-                        lastResponse = sendMessageSafely(session, msg.singleText())
+                        lastResponse = sendMessageStreaming(session, msg.singleText())
                         session.sendCount++
                     }
                     is AiMessage -> { /* already reflected in conversation state */ }
                     is ToolExecutionResultMessage -> {
                         val truncated = msg.text().take(400)
-                        lastResponse = sendMessageSafely(session, "[Tool ${msg.toolName()} result]: $truncated")
+                        lastResponse = sendMessageStreaming(session, "[Tool ${msg.toolName()} result]: $truncated")
                         session.sendCount++
                     }
                 }
             }
 
             session.processedMessageCount = messages.size
-            val result = parseResponse(session, lastResponse)
-            lastResponse?.let { resp ->
-                (resp as? com.google.ai.edge.litertlm.Message)?.contents?.toString()?.let { text ->
-                    notifier?.onPartialText(session.handle, text)
-                }
-            }
             notifyQueuePosition(session.handle, -1)
-            return result
+            return parseResponse(lastResponse)
         } catch (e: Exception) {
             XLog.e(TAG, "runChat failed for ${session.handle}", e)
             notifyQueuePosition(session.handle, -1)
@@ -278,52 +282,94 @@ class SessionDispatcher(private val context: Context) {
         XLog.i(TAG, "rebuildConversation: ${session.handle} ready (${nativeTools.size} tools, ${lease.backendLabel})")
     }
 
-    private fun sendMessageSafely(session: HostSession, text: String): Any? {
+    private fun sendMessageStreaming(session: HostSession, text: String): StreamedResponse {
         val conv = session.conversation
             ?: throw IllegalStateException("Conversation not initialized - engine may have failed to load the model")
         return try {
-            conv.sendMessage(text)
+            streamMessage(conv, session.handle, text)
         } catch (e: Exception) {
             val message = e.message ?: ""
             val salvaged = ToolCallParser.extractFromSdkParseError(message)
             if (salvaged != null) {
                 XLog.w(TAG, "SDK tool call parse failed, salvaging raw output: ${message.take(200)}")
-                salvaged
+                StreamedResponse(salvaged, null)
             } else if (!session.gpuFailed && LocalModelRuntime.isGpuBackendFailure(e)) {
                 XLog.w(TAG, "sendMessage: GPU inference failed, degrading to CPU: ${e.message}")
                 session.gpuFailed = true
                 rebuildConversation(session, selectedModelPath() ?: throw e)
-                session.conversation?.sendMessage(text)
+                sendMessageStreaming(session, text)
             } else {
                 throw e
             }
         }
     }
 
-    private fun parseResponse(session: HostSession, response: Any?): ChatResult {
-        // 1. Native structured tool calls from the SDK
-        if (response is com.google.ai.edge.litertlm.Message) {
-            val nativeCalls = response.toolCalls
-            if (!nativeCalls.isNullOrEmpty()) {
-                val calls = nativeCalls.mapNotNull { tc ->
-                    try {
-                        ChatResult.ToolCall(tc.name, GSON.toJson(tc.arguments))
-                    } catch (e: Exception) {
-                        XLog.w(TAG, "Failed to convert native ToolCall: ${tc.name}", e)
-                        null
-                    }
+    /**
+     * Runs one streaming turn: emits each incremental chunk via the notifier and
+     * blocks until the SDK signals completion. Returns the accumulated full text
+     * plus any native tool calls carried on the stream.
+     */
+    private fun streamMessage(conv: Conversation, handle: String, text: String): StreamedResponse {
+        val latch = CountDownLatch(1)
+        val fullText = StringBuilder()
+        var nativeToolCalls: List<ToolCall>? = null
+        var error: Throwable? = null
+
+        conv.sendMessageAsync(text, object : MessageCallback {
+            override fun onMessage(message: Message) {
+                val piece = message.contents?.toString().orEmpty()
+                if (piece.isNotEmpty()) {
+                    fullText.append(piece)
+                    notifier?.onPartialText(handle, piece)
                 }
-                if (calls.isNotEmpty()) {
-                    XLog.i(TAG, "parseResponse: ${calls.size} native tool calls from SDK")
-                    val text = response.contents?.toString()?.trim()?.ifEmpty { null }
-                    return ChatResult(text, calls)
+                if (!message.toolCalls.isNullOrEmpty()) {
+                    nativeToolCalls = message.toolCalls
                 }
             }
-            return ChatResult(response.contents?.toString()?.trim(), emptyList())
+
+            override fun onDone() {
+                latch.countDown()
+            }
+
+            override fun onError(throwable: Throwable) {
+                error = throwable
+                latch.countDown()
+            }
+        })
+
+        try {
+            latch.await()
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw RuntimeException("Model streaming interrupted", e)
+        }
+        error?.let { throw it }
+
+        return StreamedResponse(fullText.toString(), nativeToolCalls)
+    }
+
+    private fun parseResponse(response: StreamedResponse?): ChatResult {
+        if (response == null) return ChatResult(null, emptyList())
+        val text = response.fullText
+
+        // 1. Native structured tool calls from the SDK
+        val nativeCalls = response.nativeToolCalls
+        if (!nativeCalls.isNullOrEmpty()) {
+            val calls = nativeCalls.mapNotNull { tc ->
+                try {
+                    ChatResult.ToolCall(tc.name, GSON.toJson(tc.arguments))
+                } catch (e: Exception) {
+                    XLog.w(TAG, "Failed to convert native ToolCall: ${tc.name}", e)
+                    null
+                }
+            }
+            if (calls.isNotEmpty()) {
+                XLog.i(TAG, "parseResponse: ${calls.size} native tool calls from SDK")
+                return ChatResult(text.trim().ifEmpty { null }, calls)
+            }
         }
 
-        // 2. Salvaged raw string (SDK parse error path) or plain text
-        val text = response?.toString() ?: ""
+        // 2. Raw <tool_call> text embedded in the stream (SDK parse-error salvage or plain text)
         val calls = ToolCallParser.extract(text).map { ChatResult.ToolCall(it.name, it.argumentsJson) }
         if (calls.isNotEmpty()) {
             val thinking = text
