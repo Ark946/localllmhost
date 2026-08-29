@@ -59,8 +59,7 @@ class MainActivity : AppCompatActivity(), CoroutineScope by MainScope() {
     private lateinit var statusText: TextView
     private lateinit var detailText: TextView
     private lateinit var modelSpinner: Spinner
-    private lateinit var startServiceButton: MaterialButton
-    private lateinit var stopServiceButton: MaterialButton
+    private lateinit var startStopServiceButton: MaterialButton
 
     private lateinit var customUrlInput: TextInputEditText
     private lateinit var downloadProgress: LinearProgressIndicator
@@ -91,8 +90,7 @@ class MainActivity : AppCompatActivity(), CoroutineScope by MainScope() {
         statusText = findViewById(R.id.statusText)
         detailText = findViewById(R.id.detailText)
         modelSpinner = findViewById(R.id.modelSpinner)
-        startServiceButton = findViewById(R.id.startServiceButton)
-        stopServiceButton = findViewById(R.id.stopServiceButton)
+        startStopServiceButton = findViewById(R.id.startStopServiceButton)
         customUrlInput = findViewById(R.id.customUrlInput)
         downloadProgress = findViewById(R.id.downloadProgress)
         downloadProgressLabel = findViewById(R.id.downloadProgressLabel)
@@ -102,15 +100,14 @@ class MainActivity : AppCompatActivity(), CoroutineScope by MainScope() {
         setUpBottomNav()
         setUpModelSpinner()
 
-        startServiceButton.setOnClickListener {
-            startForegroundService(Intent(this, LlmHostService::class.java))
-            Toast.makeText(this, "Hosting service started", Toast.LENGTH_SHORT).show()
-            setServiceButtons(running = true)
-        }
-        stopServiceButton.setOnClickListener {
-            stopService(Intent(this, LlmHostService::class.java))
-            Toast.makeText(this, "Hosting service stopped", Toast.LENGTH_SHORT).show()
-            setServiceButtons(running = false)
+        startStopServiceButton.setOnClickListener {
+            val running = LlmHostService.isRunning
+            if (running) {
+                stopService(Intent(this, LlmHostService::class.java))
+            } else {
+                startForegroundService(Intent(this, LlmHostService::class.java))
+            }
+            setServiceButtons(running = !running)
         }
         findViewById<MaterialButton>(R.id.downloadCustomButton).setOnClickListener { downloadCustom() }
         findViewById<MaterialButton>(R.id.linkLocalButton).setOnClickListener {
@@ -345,8 +342,9 @@ class MainActivity : AppCompatActivity(), CoroutineScope by MainScope() {
     }
 
     private fun setServiceButtons(running: Boolean) {
-        startServiceButton.isEnabled = !running
-        stopServiceButton.isEnabled = running
+        // The button always shows the *next* action: start when idle, stop when running.
+        startStopServiceButton.text = if (running) "Stop hosting service" else "Start hosting service"
+        startStopServiceButton.setIconResource(if (running) R.drawable.ic_stop else R.drawable.ic_play_arrow)
     }
 
     // ---- Download / import -------------------------------------------- //
