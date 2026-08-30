@@ -30,11 +30,10 @@ Edge). Works fully offline.
 
 1. The host app runs a foreground service (`dataSync`) and holds a single
    LiteRT-LM `Engine` process-wide.
-2. Client apps bind through the `ILlmService` AIDL. Binding requires the
-   `com.arkj.llmserver.permission.BIND_LLM_SERVICE` permission (declared by the
-   client SDK), and every call is authorized per app: on first use the host
-   prompts for consent (dialog when foreground, notification when background)
-   and remembers the decision.
+2. Client apps bind through the `ILlmService` AIDL. Binding is open to any
+   app; every call is authorized per app, so on first use the host prompts for
+   consent (dialog when foreground, notification when background) and remembers
+   the decision.
 3. LiteRT-LM is single-session, so the host serializes clients through a
    `SessionDispatcher` queue (with incremental history replay on switch).
 
@@ -94,14 +93,13 @@ with no code changes.
 
 ## Security model
 
-- **Per-app consent.** Binding is open to any app that declares the
-  `BIND_LLM_SERVICE` permission (`protectionLevel="normal"`), but every AIDL
-  call is authorized against a persisted per-package allow/deny list. The first
-  time an app calls into the service, the host prompts the user — an in-app
-  dialog when the host is foreground, a system notification otherwise — and
-  remembers the decision. A denied app is refused on every later call without
-  re-prompting. Both states can be changed any time from the host's
-  "我的 → 应用权限设置" screen.
+- **Per-app consent.** Binding is open to any app, but every AIDL call is
+  authorized against a persisted per-package allow/deny list. The first time an
+  app calls into the service, the host prompts the user — an in-app dialog when
+  the host is foreground, a system notification otherwise — and remembers the
+  decision. A denied app is refused on every later call without re-prompting.
+  Both states can be changed any time from the host's "我的 → 应用权限设置"
+  screen.
 - **No network requirement.** Inference is fully local; the only network use is
   downloading models (which you can bypass entirely via file import).
 

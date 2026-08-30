@@ -15,8 +15,8 @@ import com.arkj.llm.contract.ILlmService
  * Binds to the LLM Host app's AIDL service and hands out a connected
  * [ILlmService] proxy. Reconnects automatically after the host process dies.
  *
- * The host is protected by a signature-level permission (BIND_LLM_SERVICE), so
- * only agent apps signed with the same key can bind.
+ * Binding is open; the host authorizes each call per app (first use prompts
+ * for consent).
  */
 object LlmHostConnection {
 

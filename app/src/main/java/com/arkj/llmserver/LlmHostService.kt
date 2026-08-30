@@ -26,8 +26,8 @@ import com.google.gson.JsonObject
 
 /**
  * Foreground service exposing the on-device LLM to agent apps over AIDL.
- * Binding is open to any app holding the BIND_LLM_SERVICE permission; per-app
- * access is enforced per-call via [AppAccessStore] and prompted for consent.
+ * Binding is open to any app; per-app access is enforced per-call via
+ * [AppAccessStore] and prompted for consent on first use.
  */
 class LlmHostService : Service() {
 
