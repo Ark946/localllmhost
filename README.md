@@ -1,9 +1,10 @@
 # ArkLlm
 
 An on-device local-LLM inference backend for Android, exposed as a cross-app
-AIDL service. One app loads a model once; any other app (signed with the same
-key) binds and streams inference over the same session — no root, no custom ROM,
-no per-app model copies.
+AIDL service. One app loads a model once; any other app binds and streams
+inference over the same session — no root, no custom ROM, no per-app model
+copies. Access is authorized per app: the first time an app connects, the host
+asks the user for consent and remembers the decision.
 
 Powered by [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM) (Google AI
 Edge). Works fully offline.
@@ -19,7 +20,7 @@ Edge). Works fully offline.
 ## How it works
 
 ```
-┌───────────────┐   bind (signature-level)   ┌──────────────────────┐
+┌───────────────┐   bind (consent-gated)     ┌──────────────────────┐
 │  Your app     │ ─────────────────────────▶ │  ArkLlm Host app     │
 │ RemoteLlmClient│  AIDL: ILlmService         │  LlmHostService      │
 │  (client SDK)  │ ◀───────────────────────── │   └─ EngineHolder     │
@@ -29,10 +30,11 @@ Edge). Works fully offline.
 
 1. The host app runs a foreground service (`dataSync`) and holds a single
    LiteRT-LM `Engine` process-wide.
-2. Client apps bind through the `ILlmService` AIDL. Binding is gated by the
-   `com.arkj.llmserver.permission.BIND_LLM_SERVICE` permission at
-   `protectionLevel="signature"` — only apps signed with the **same key** may
-   bind.
+2. Client apps bind through the `ILlmService` AIDL. Binding requires the
+   `com.arkj.llmserver.permission.BIND_LLM_SERVICE` permission (declared by the
+   client SDK), and every call is authorized per app: on first use the host
+   prompts for consent (dialog when foreground, notification when background)
+   and remembers the decision.
 3. LiteRT-LM is single-session, so the host serializes clients through a
    `SessionDispatcher` queue (with incremental history replay on switch).
 
@@ -92,20 +94,19 @@ with no code changes.
 
 ## Security model
 
-- **Signature-gated binding.** The `BIND_LLM_SERVICE` permission is
-  `protectionLevel="signature"`, so a client must be signed with the same
-  certificate as the host. For a private agent + host pair, sign both with one
-  key. This is a *same-key* trust model, not a public API — see
-  [Limitations](#limitations).
+- **Per-app consent.** Binding is open to any app that declares the
+  `BIND_LLM_SERVICE` permission (`protectionLevel="normal"`), but every AIDL
+  call is authorized against a persisted per-package allow/deny list. The first
+  time an app calls into the service, the host prompts the user — an in-app
+  dialog when the host is foreground, a system notification otherwise — and
+  remembers the decision. A denied app is refused on every later call without
+  re-prompting. Both states can be changed any time from the host's
+  "我的 → 应用权限设置" screen.
 - **No network requirement.** Inference is fully local; the only network use is
   downloading models (which you can bypass entirely via file import).
 
 ## Limitations
 
-- **Same-key only.** Because binding is signature-gated, two independently-signed
-  apps cannot share one host out of the box. A public "any app may bind" model
-  would need a weaker permission (e.g. `normal`) plus runtime consent — trade-offs
-  left to the integrator.
 - **One engine, one model at a time.** The host keeps a single warm engine and
   serializes clients; switching models resets live sessions (clients are notified
   via `onSessionInvalidated`).

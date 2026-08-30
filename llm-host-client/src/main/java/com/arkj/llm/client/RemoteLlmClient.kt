@@ -115,7 +115,7 @@ class RemoteLlmClient(
         val toolsJson = ToolSpecCodec.encode(toolSpecs)
         val h = host.openSession(clientId, sessionId, system, toolsJson, temperature)
         if (h.isBlank()) {
-            throw IllegalStateException("LLM host refused session - is a model selected in the host app?")
+            throw IllegalStateException("LLM host refused to open a session (access denied, awaiting approval, or no model selected). Check the ArkLlm Host app, then retry.")
         }
         handle = h
         registerCallbackIfNeeded()

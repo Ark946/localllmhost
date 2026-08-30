@@ -3,9 +3,12 @@
 
 package com.arkj.llmserver
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.widget.AdapterView
@@ -15,11 +18,14 @@ import android.widget.LinearLayout
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
+import com.arkj.llmserver.runtime.AppAccessStore
 import com.arkj.llmserver.runtime.HfModelCatalog
 import com.arkj.llmserver.runtime.HostPrefs
 import com.arkj.llmserver.runtime.LocalModelManager
@@ -30,6 +36,7 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.color.DynamicColors
 import com.google.android.material.color.MaterialColors
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.textfield.TextInputEditText
 import kotlinx.coroutines.CoroutineScope
@@ -64,6 +71,10 @@ class MainActivity : AppCompatActivity(), CoroutineScope by MainScope() {
     private lateinit var customUrlInput: TextInputEditText
     private lateinit var downloadProgress: LinearProgressIndicator
     private lateinit var downloadProgressLabel: TextView
+    private lateinit var appAccessList: LinearLayout
+
+    private val requestNotificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* no-op */ }
 
     private var onSurface = 0
     private var onSurfaceVariant = 0
@@ -77,6 +88,7 @@ class MainActivity : AppCompatActivity(), CoroutineScope by MainScope() {
         // Material You: on Android 12+ this recolors the app from the user's wallpaper.
         DynamicColors.applyToActivitiesIfAvailable(application)
         HostPrefs.init(this)
+        AppAccessStore.init(this)
         setContentView(R.layout.activity_main)
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -94,6 +106,7 @@ class MainActivity : AppCompatActivity(), CoroutineScope by MainScope() {
         customUrlInput = findViewById(R.id.customUrlInput)
         downloadProgress = findViewById(R.id.downloadProgress)
         downloadProgressLabel = findViewById(R.id.downloadProgressLabel)
+        appAccessList = findViewById(R.id.appAccessList)
 
         resolveThemeColors()
         applyEdgeToEdge()
@@ -117,6 +130,30 @@ class MainActivity : AppCompatActivity(), CoroutineScope by MainScope() {
             }
             startActivityForResult(intent, REQUEST_PICK_MODEL)
         }
+
+        requestNotificationsPermissionIfNeeded()
+    }
+
+    private fun requestNotificationsPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        BindPrompt.isAppForeground = true
+        BindPrompt.dialogListener = ::showAccessDialog
+        BindPrompt.onStateChanged = ::refreshAppPermissions
+    }
+
+    override fun onStop() {
+        BindPrompt.dialogListener = null
+        BindPrompt.onStateChanged = null
+        BindPrompt.isAppForeground = false
+        super.onStop()
     }
 
     override fun onResume() {
@@ -307,6 +344,7 @@ class MainActivity : AppCompatActivity(), CoroutineScope by MainScope() {
         rebuildSpinner()
         updateStatusCard()
         setServiceButtons(LlmHostService.isRunning)
+        refreshAppPermissions()
     }
 
     private fun rebuildSpinner() {
@@ -345,6 +383,86 @@ class MainActivity : AppCompatActivity(), CoroutineScope by MainScope() {
         // The button always shows the *next* action: start when idle, stop when running.
         startStopServiceButton.text = if (running) "Stop hosting service" else "Start hosting service"
         startStopServiceButton.setIconResource(if (running) R.drawable.ic_stop else R.drawable.ic_play_arrow)
+    }
+
+    private fun showAccessDialog(pkg: String, label: String) {
+        if (isFinishing || isDestroyed) return
+        MaterialAlertDialogBuilder(this)
+            .setTitle("应用请求访问")
+            .setMessage("$label ($pkg) 请求访问 LLM 服务。是否允许？")
+            .setPositiveButton("允许") { _, _ -> BindPrompt.resolve(pkg, true) }
+            .setNegativeButton("拒绝") { _, _ -> BindPrompt.resolve(pkg, false) }
+            .setOnCancelListener { /* keep PENDING; user can decide later in settings */ }
+            .show()
+    }
+
+    private fun refreshAppPermissions() {
+        appAccessList.removeAllViews()
+        val entries = AppAccessStore.entries()
+        if (entries.isEmpty()) {
+            appAccessList.addView(statusRow("暂无应用请求"))
+            return
+        }
+        entries.forEach { entry -> appAccessList.addView(appAccessRow(entry)) }
+    }
+
+    private fun appAccessRow(entry: AppAccessStore.Entry): View {
+        val label = runCatching {
+            val info = packageManager.getApplicationInfo(entry.packageName, 0)
+            packageManager.getApplicationLabel(info).toString()
+        }.getOrNull() ?: entry.packageName
+
+        val card = MaterialCardView(this).apply {
+            radius = dp(16).toFloat()
+            cardElevation = 0f
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(12) }
+        }
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+        }
+
+        content.addView(TextView(this).apply {
+            text = label
+            textSize = 16f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            setTextColor(onSurface)
+        })
+
+        content.addView(TextView(this).apply {
+            text = entry.packageName
+            textSize = 13f
+            setTextColor(onSurfaceVariant)
+            setPadding(0, dp(4), 0, 0)
+        })
+
+        content.addView(TextView(this).apply {
+            text = when (entry.status) {
+                AppAccessStore.Status.ALLOWED -> "已允许"
+                AppAccessStore.Status.DENIED -> "已拒绝"
+                AppAccessStore.Status.PENDING -> "待确认"
+            }
+            textSize = 13f
+            setTextColor(onSurfaceVariant)
+            setPadding(0, dp(4), 0, 0)
+        })
+
+        val allow = entry.status != AppAccessStore.Status.ALLOWED
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(12), 0, 0)
+        }
+        actions.addView(materialButton(if (allow) "允许" else "拒绝", if (allow) BUTTON_FILLED else BUTTON_OUTLINED) {
+            BindPrompt.resolve(entry.packageName, allow)
+        })
+        content.addView(actions)
+
+        card.addView(content)
+        return card
     }
 
     // ---- Download / import -------------------------------------------- //

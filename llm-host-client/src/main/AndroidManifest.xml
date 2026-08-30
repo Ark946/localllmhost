@@ -1,3 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- LLM host client library — no manifest entries required. -->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+<!-- LLM host client library — declares the host's bind permission so consuming apps get it via manifest merger. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="com.arkj.llmserver.permission.BIND_LLM_SERVICE" />
+</manifest>

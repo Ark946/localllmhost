@@ -197,6 +197,22 @@
                             app:iconTint="?attr/colorPrimary" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
+
+                <!-- App access permissions -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="24dp"
+                    android:text="应用权限设置"
+                    android:textAppearance="?attr/textAppearanceLabelLarge"
+                    android:textColor="?attr/colorPrimary" />
+
+                <LinearLayout
+                    android:id="@+id/appAccessList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:orientation="vertical" />
             </LinearLayout>
         </ScrollView>
     </FrameLayout>

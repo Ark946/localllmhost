@@ -9,21 +9,25 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.os.RemoteCallbackList
 import androidx.core.app.NotificationCompat
 import com.arkj.llm.contract.ChatMessageCodec
+import com.arkj.llm.contract.ChatResult
 import com.arkj.llm.contract.ILlmService
 import com.arkj.llm.contract.ILlmServiceCallback
+import com.arkj.llmserver.runtime.AppAccessStore
 import com.arkj.llmserver.runtime.HostPrefs
 import com.arkj.llmserver.runtime.LocalModelManager
 import com.arkj.llmserver.runtime.XLog
+import com.google.gson.JsonObject
 
 /**
  * Foreground service exposing the on-device LLM to agent apps over AIDL.
- * Binding is restricted to apps signed with the same key via the
- * BIND_LLM_SERVICE signature permission declared in the manifest.
+ * Binding is open to any app holding the BIND_LLM_SERVICE permission; per-app
+ * access is enforced per-call via [AppAccessStore] and prompted for consent.
  */
 class LlmHostService : Service() {
 
@@ -43,6 +47,7 @@ class LlmHostService : Service() {
         super.onCreate()
         isRunning = true
         HostPrefs.init(this)
+        AppAccessStore.init(this)
         dispatcher = SessionDispatcher(applicationContext).also { d ->
             d.notifier = object : SessionDispatcher.Notifier {
                 override fun onPartialText(handle: String, text: String) {
@@ -72,6 +77,33 @@ class LlmHostService : Service() {
         super.onDestroy()
     }
 
+    private sealed interface Access {
+        object Allowed : Access
+        object Denied : Access
+        object Pending : Access
+    }
+
+    /**
+     * Resolve the calling package and its access state. Must be called
+     * synchronously at the top of each Binder method, before any async work,
+     * so that [Binder.getCallingUid] still sees the live transaction.
+     */
+    private fun callerAccess(): Pair<String, Access> {
+        val uid = Binder.getCallingUid()
+        val pkg = packageManager.getPackagesForUid(uid)?.firstOrNull()
+            ?: return "" to Access.Denied
+        if (pkg == packageName) return pkg to Access.Allowed // trust self
+        return when (AppAccessStore.statusFor(pkg)) {
+            AppAccessStore.Status.ALLOWED -> pkg to Access.Allowed
+            AppAccessStore.Status.DENIED -> pkg to Access.Denied
+            else -> {
+                AppAccessStore.recordRequest(pkg)
+                BindPrompt.requestAccess(pkg)
+                pkg to Access.Pending
+            }
+        }
+    }
+
     private val binder = object : ILlmService.Stub() {
 
         override fun openSession(
@@ -81,11 +113,20 @@ class LlmHostService : Service() {
             toolsJson: String,
             temperature: Double,
         ): String {
+            val (pkg, access) = callerAccess()
+            if (access != Access.Allowed) {
+                XLog.w(TAG, "openSession: access $access for $pkg")
+                return ""
+            }
             XLog.i(TAG, "openSession: client=$clientId session=$sessionId")
             return dispatcher.openSession(clientId, sessionId, systemPrompt, toolsJson, temperature)
         }
 
         override fun chat(handle: String, messagesJson: String): String {
+            val (pkg, access) = callerAccess()
+            if (access != Access.Allowed) {
+                return ChatResult.error("LLM host access denied or awaiting approval for $pkg")
+            }
             val messages = ChatMessageCodec.decode(messagesJson)
             XLog.d(TAG, "chat: handle=$handle messages=${messages.size}")
             val future = dispatcher.chat(handle, messages)
@@ -98,6 +139,10 @@ class LlmHostService : Service() {
         }
 
         override fun singleShot(systemPrompt: String, prompt: String, temperature: Double): String {
+            val (pkg, access) = callerAccess()
+            if (access != Access.Allowed) {
+                return ChatResult.error("LLM host access denied or awaiting approval for $pkg")
+            }
             XLog.d(TAG, "singleShot: prompt=${prompt.take(60)}...")
             val future = dispatcher.singleShot(systemPrompt, prompt, temperature)
             return try {
@@ -109,16 +154,41 @@ class LlmHostService : Service() {
         }
 
         override fun closeSession(handle: String) {
+            val (_, access) = callerAccess()
+            if (access != Access.Allowed) return
             dispatcher.closeSession(handle)
         }
 
-        override fun getModelStatus(): String = dispatcher.modelStatusJson()
+        override fun getModelStatus(): String {
+            val (_, access) = callerAccess()
+            if (access != Access.Allowed) {
+                return JsonObject().apply {
+                    addProperty("modelName", "none")
+                    addProperty("modelId", "")
+                    addProperty("modelPath", "")
+                    addProperty("backendLabel", "not loaded")
+                    addProperty("activeClients", 0)
+                    addProperty("ready", false)
+                }.toString()
+            }
+            return dispatcher.modelStatusJson()
+        }
 
         override fun debugAction(action: String, argsJson: String): String {
+            val (pkg, access) = callerAccess()
+            if (access != Access.Allowed) {
+                return JsonObject().apply {
+                    addProperty("ok", false)
+                    addProperty("detail", "access denied for $pkg")
+                    addProperty("action", action)
+                }.toString()
+            }
             return DebugActions.handle(action, argsJson, this@LlmHostService)
         }
 
         override fun registerCallback(callback: ILlmServiceCallback) {
+            val (_, access) = callerAccess()
+            if (access != Access.Allowed) return
             callbacks.register(callback)
             XLog.i(TAG, "registerCallback: ${callbacks.registeredCallbackCount} registered")
         }
